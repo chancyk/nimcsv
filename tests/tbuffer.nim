@@ -40,3 +40,9 @@ block:
     assert second_bytes_read == first_bytes_read
     assert buffer.raw[0] == 'a'
     assert buffer.raw[1] == 'b'
+    f.setFilePos(0)
+    buffer = allocBuffer(100)
+    var third_bytes_read = f.readIntoBuffer(buffer)
+    echo "Overflow Bytes: ", third_bytes_Read
+    # readBuffer will not exceed the capacity of the buffer
+    assert third_bytes_read == 100
