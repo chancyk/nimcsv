@@ -2,9 +2,6 @@
 const python_h = "Python.h"
 
 
-{.localPassc: r"-IC:\Python38\include ".}
-
-
 type
     PyObject*                                                          {.header: python_h, importc: "PyObject".} = object
 

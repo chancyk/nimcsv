@@ -6,7 +6,7 @@ from std/unicode import reversed
 import nimsimd/[avx2, pclmulqdq]
 from nimsimd/avx import M256i
 
-from python import PyObject, PyBytes_AsStringAndSize
+from python import PyObject, PyBytes_AsStringAndSize, PyNone
 
 
 when defined(gcc) or defined(clang):
@@ -30,7 +30,7 @@ type
     buffers: seq[Buffer]
 
   Row* = ref object
-    fields: seq[PyObject]
+    fields: seq[ptr PyObject]
     field_count: uint16
     next_start: int32
     next_end: int
@@ -100,7 +100,7 @@ proc cmp_mask_against_input*(input: SIMD_Input; m: uint8): int64 {.inline.} =
   var cmp_res_hi = mm256_cmpeq_epi8(input.hi, mask)
   # lo into the low 32bits and hi into the high 32bits
   var res_lo: uint64 = cast[uint32](mm256_movemask_epi8(cmp_res_lo))
-  var res_hi: uint64 = mm256_movemask_epi8(cmp_res_hi)
+  var res_hi: uint64 = cast[uint32](mm256_movemask_epi8(cmp_res_hi))
   var quote_bits = res_lo or (res_hi shl 32)
   return cast[int64](quote_bits)
 
@@ -182,9 +182,9 @@ proc parse_row(buffer: var Buffer, indexes: seq[int32], line_field_start: int32,
     let field_end = sep_idx - 1
     debug_parse_row()
     if field_end < field_start:
-      row.fields.add  nil
+      row.fields.add  PyNone()
     else:
-      row.fields.add  py.PyBytes_AsStringAndSize(cast[cstring](buffer[field_start].addr), cint(sep_idx - field_start))
+      row.fields.add  PyBytes_AsStringAndSize(cast[cstring](buffer[field_start].addr), cint(sep_idx - field_start))
 
     row.field_count += 1
     field_start = sep_idx + 1
@@ -222,7 +222,6 @@ proc main*() =
 
   var
     buffer: Buffer
-    row_count = 0
     buffer_count = 0
     row_start_idx: uint32 = 0
     bytes_read: uint32 = 0
@@ -243,7 +242,6 @@ proc main*() =
     buffer = ctx.active_buffer()
     let indexes = parse_separators(buffer, bytes_read)
     while true:
-      row_count += 1
       let row = parse_row(buffer, indexes, last_row.next_start, last_row.next_end)
       last_row = row
       rows.add(row)
@@ -259,7 +257,7 @@ proc main*() =
   let t2 = getMonoTime()
   var time_in_seconds = (t2 - t0).inMilliseconds.float64 / 1000.0
   echo "Elapsed: ", time_in_seconds, "s"
-  echo " # Rows: ", row_count
+  echo " # Rows: ", rows.len
   echo " # Buffers: ", buffer_count
 
 main()
