@@ -1,5 +1,3 @@
-{.experimental: "views".}
-
 import std/[times, monotimes, strformat, strutils]
 from std/unicode import reversed
 
@@ -32,14 +30,13 @@ type
     quote*: char
     newline*: char
     active_buffer_idx: int
+    quote_mask: int64
     prev_iter_inside_quote: int64
+    num_fields: int
 
   Row* = ref object
     fields: seq[cstring]
     field_count: uint16
-    next_start: int32
-    next_end: int
-    last_line: bool
 
   SIMD_Input* = ref object
     lo*: M256i
@@ -127,10 +124,8 @@ template debug_parse_separators() =
 
 proc parse_separators*(ctx: var ParseContext): seq[int32] =
   var input = SIMD_Input()
-  var indexes = newSeq[int32]()
-
-  when DEBUG_SEP_PARSER:
-    var idx_count = 0
+  var indexes = newSeqOfCap[int32](int(ctx.buffer_size / 4))
+  var idx_count = 0
 
   let buffer = ctx.active_buffer()
 
@@ -149,7 +144,8 @@ proc parse_separators*(ctx: var ParseContext): seq[int32] =
         mm_set1_epi8(0xFF), 0)
     )
     quote_mask = quote_mask xor ctx.prev_iter_inside_quote
-    ctx.prev_iter_inside_quote = quote_mask shr 63
+    ctx.quote_mask = quote_mask
+    ctx.prev_iter_inside_quote = ctx.quote_mask shr 63
     ##  FIND COMMAS
     let sep_mask = cmp_mask_against_input(input, ctx.separator.uint8)
     ##  FIND NEWLINES
@@ -190,17 +186,21 @@ proc readBuffer*(ctx: var ParseContext): uint32 =
   return num_bytes
 
 
+proc createRow(ctx: ParseContext): Row =
+  result = Row(fields: newSeqOfCap[cstring](ctx.num_fields))
+
+
 iterator parse_rows*(ctx: var ParseContext): Row =
   var
+    row_count = 0
     buffer_count = 0
     prev_buffer: Buffer
     buffer: Buffer
     bytes_read: uint32
     indexes: seq[int32]
-    row = Row(fields: @[])
+    row = ctx.createRow()
     end_of_line = false
     field_start: int32
-    prev_iter_inside_quote: int32 = 0
 
   if not ctx.has_active_buffer():
     bytes_read = ctx.readBuffer()
@@ -208,7 +208,6 @@ iterator parse_rows*(ctx: var ParseContext): Row =
     indexes = ctx.parse_separators()
 
   while bytes_read > 0:
-    buffer_count += 1
     for i in 0 ..< indexes.len:
       let sep_idx = indexes[i]
       let c = buffer.raw[sep_idx]
@@ -219,9 +218,9 @@ iterator parse_rows*(ctx: var ParseContext): Row =
       let field_end = sep_idx - 1
       debug_parse_row()
       if field_end < field_start:
-        row.fields.add  nil
+        row.fields.add nil
       else:
-        row.fields.add  cast[cstring](buffer.raw[field_start].addr)
+        row.fields.add cast[cstring](buffer.raw[field_start].addr)
 
       row.field_count += 1
       field_start = sep_idx + 1
@@ -229,14 +228,21 @@ iterator parse_rows*(ctx: var ParseContext): Row =
       if end_of_line:
         field_start = sep_idx + 1
         yield row
-        row = Row(fields: @[])
+        row_count += 1
+        row = ctx.createRow()
         end_of_line = false
 
     # parse the next buffer and continue
+    buffer_count += 1
     prev_buffer = buffer
     if field_start < prev_buffer.size:
+      let remaining = prev_buffer.size - field_start
+      ## We might be moving a quote from one buffer to another, so
+      ## we need to take the state before that possible quote.
+      ctx.prev_iter_inside_quote = (ctx.quote_mask shl remaining) shr 63
       bytes_read = ctx.readBuffer(prev_buffer, field_start)
     else:
+      ctx.prev_iter_inside_quote = ctx.quote_mask shr 63
       bytes_read = ctx.readBuffer()
 
     if bytes_read == 0:
@@ -247,8 +253,14 @@ iterator parse_rows*(ctx: var ParseContext): Row =
     indexes = ctx.parse_separators()
 
 
-proc createParseContext*(file: File, buffer_size: int, separator: char = ',', quote: char = '"', newline: char = '\n'): ParseContext =
-  ParseContext(
+proc createParseContext*(
+  file: File, buffer_size: int,
+  separator: char = ',',
+  quote: char = '"',
+  newline: char = '\n',
+  num_fields: int = 64
+): ParseContext =
+  result = ParseContext(
     file: file,
     buffer_size: buffer_size,
     active_buffer_idx: -1,
@@ -256,13 +268,14 @@ proc createParseContext*(file: File, buffer_size: int, separator: char = ',', qu
     separator: separator,
     quote: quote,
     newline: newline,
-    prev_iter_inside_quote: 0
+    prev_iter_inside_quote: 0,
+    num_fields: num_fields
   )
 
 
 proc main*() =
   let t0 = getMonoTime()
-  let filepath = r"C:\Temp\\EOM_OnelineLarge\\EOM_Historical.csv"
+  let filepath = r"C:\\Projects\\nimcsv\\sample.csv"
   var f = open(filepath, fmRead)
   if f == nil:
     quit(1)
@@ -271,19 +284,13 @@ proc main*() =
     buffer_count = 0
     row_start_idx: uint32 = 0
     rows = newSeq[Row]()
-    ctx = createParseContext(f, BUFFER_SIZE)
-    last_row = Row(
-      fields: @[],
-      next_start: 0,
-      next_end: 0
-    )
+    ctx = createParseContext(f, BUFFER_SIZE, num_fields=85)
 
   # each buffer
   var row_count = 0
   for row in ctx.parse_rows():
     row_count += 1
-    if row.field_count > 0:
-      rows.add(row)
+    rows.add(row)
     if row_count mod 100_000 == 0:
       echo "Row #: ", row_count
 

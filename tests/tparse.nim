@@ -23,13 +23,13 @@ buffer1.add  """,unquoted,345|2678,some text,901|2234,567,890|3123,unquoted,345|
 fields.add   """1000000001000100001000000000100010000100010001000010000000010001"""
 buffer1.add  """3678,some text,901|3234,567,890999999999999999999999999999999999"""  # 192
 fields.add   """0000100000000010001000010001000000000000000000000000000000000000"""
-buffer1.add  """9999|aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"aa|b"""  # 256
+buffer1.add  """9999|aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"aab,"""  # 256
 fields.add   """0000100000000000000000000000000000000000000000000000000000000000"""
 ctx.addBuffer(buffer1)
 let indexes1 = ctx.parse_separators()
 
 var buffer2 = b.allocBuffer(256)
-buffer2.add  """bb,bb"bbbbbbbbbbbbbbbbbbbbbbb|bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"""  # quote wraps from 256
+buffer2.add  """bb,bb"bbbbbbbbbbbbbbbbbbbbbbb|bbbbbb"bbbbbbbb"bbbbbbbbbbbbbbbbbb"""  # quote wraps from 256
 fields.add   """0000000000000000000000000000010000000000000000000000000000000000"""
 buffer2.add  """cccccccccc|"cccccccc""c,c""cccccccccccc"|ccccccccc"ccc|ccc"ccccc"""  # sep inside of quotes and escaped quotes
 fields.add   """0000000000100000000000000000000000000000100000000000000000000000"""
