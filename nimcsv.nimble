@@ -8,6 +8,7 @@ bin           = @["nimcsv"]
 
 
 # Dependencies
+requires "nim >= 1.6.12"
 requires "nimsimd >= 1.2.5"
 
 task sample, "compile and run the sample":
