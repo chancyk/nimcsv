@@ -13,7 +13,7 @@ proc string_to_bits(x: string): uint64 =
     cast[uint64](x.reversed.parseBinInt())
 
 
-var ctx = createParseContext(nil, 256, '|')
+var ctx = createParseContext(nil, 256, newline='|')
 
 var fields = newSeq[string]()
 var buffer1 = b.allocBuffer(256)
@@ -61,11 +61,11 @@ var expected1 = newSeq[int32]()
 var expected2 = newSeq[int32]()
 
 var bits: uint64
-for i in 0 .. 3:
+for i in 0 ..< 4:
     var bits = string_to_bits(fields[i])
     flatten_bits(expected1, i * 64, bits)
 
-for i in 0 .. 1:
+for i in 0 ..< 2:
     var bits = string_to_bits(fields[i + 4])
     flatten_bits(expected2, i * 64, bits)
 

@@ -29,6 +29,8 @@ type
     buffer_size*: int
     buffers*: seq[Buffer]
     separator*: char
+    quote*: char
+    newline*: char
     active_buffer_idx: int
     prev_iter_inside_quote: int64
 
@@ -140,7 +142,7 @@ proc parse_separators*(ctx: var ParseContext): seq[int32] =
       print_text(buffer, i)
 
     ##  FIND QUOTES
-    let quote_bits = cmp_mask_against_input(input, '"'.uint8)
+    let quote_bits = cmp_mask_against_input(input, ctx.quote.uint8)
     var quote_mask = mm_cvtsi128_si64(
       mm_clmulepi64_si128(
         mm_set_epi64x(0, quote_bits),
@@ -149,9 +151,9 @@ proc parse_separators*(ctx: var ParseContext): seq[int32] =
     quote_mask = quote_mask xor ctx.prev_iter_inside_quote
     ctx.prev_iter_inside_quote = quote_mask shr 63
     ##  FIND COMMAS
-    let sep_mask = cmp_mask_against_input(input, ','.uint8)
+    let sep_mask = cmp_mask_against_input(input, ctx.separator.uint8)
     ##  FIND NEWLINES
-    let end_mask = cmp_mask_against_input(input, ctx.separator.uint8)
+    let end_mask = cmp_mask_against_input(input, ctx.newline.uint8)
     ## Separators that are not quoted.
     var field_mask = cast[uint64]((end_mask or sep_mask) and not quote_mask)
 
@@ -245,13 +247,15 @@ iterator parse_rows*(ctx: var ParseContext): Row =
     indexes = ctx.parse_separators()
 
 
-proc createParseContext*(file: File, buffer_size: int, separator: char = '\n'): ParseContext =
+proc createParseContext*(file: File, buffer_size: int, separator: char = ',', quote: char = '"', newline: char = '\n'): ParseContext =
   ParseContext(
     file: file,
     buffer_size: buffer_size,
     active_buffer_idx: -1,
     buffers: @[],
     separator: separator,
+    quote: quote,
+    newline: newline,
     prev_iter_inside_quote: 0
   )
 
