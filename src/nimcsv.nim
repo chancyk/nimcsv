@@ -26,8 +26,11 @@ const
 type
   ParseContext* = ref object
     file*: File
+    buffer_size*: int
+    buffers*: seq[Buffer]
+    separator*: char
     active_buffer_idx: int
-    buffers: seq[Buffer]
+    prev_iter_inside_quote: int64
 
   Row* = ref object
     fields: seq[cstring]
@@ -120,18 +123,17 @@ template debug_parse_separators() =
     idx_count = indexes.len
 
 
-proc parse_separators*(buffer: Buffer, separator: char): seq[int32] =
+proc parse_separators*(ctx: var ParseContext): seq[int32] =
   var input = SIMD_Input()
   var indexes = newSeq[int32]()
-  var prev_iter_inside_quote: int64 = 0
 
   when DEBUG_SEP_PARSER:
     var idx_count = 0
 
+  let buffer = ctx.active_buffer()
+
   var i = 0
   while i < buffer.size:
-    # echo buffer.raw.toOpenArray(i +  0, i +  0 + 256)
-    # echo buffer.raw.toOpenArray(i + 32, i + 32 + 256)
     input.lo = mm256_loadu_si256(buffer.raw[i +  0].addr)
     input.hi = mm256_loadu_si256(buffer.raw[i + 32].addr)
     when DEBUG_SEP_PARSER:
@@ -144,12 +146,12 @@ proc parse_separators*(buffer: Buffer, separator: char): seq[int32] =
         mm_set_epi64x(0, quote_bits),
         mm_set1_epi8(0xFF), 0)
     )
-    quote_mask = quote_mask xor prev_iter_inside_quote
-    prev_iter_inside_quote = quote_mask shr 63
+    quote_mask = quote_mask xor ctx.prev_iter_inside_quote
+    ctx.prev_iter_inside_quote = quote_mask shr 63
     ##  FIND COMMAS
     let sep_mask = cmp_mask_against_input(input, ','.uint8)
     ##  FIND NEWLINES
-    let end_mask = cmp_mask_against_input(input, separator.uint8)
+    let end_mask = cmp_mask_against_input(input, ctx.separator.uint8)
     ## Separators that are not quoted.
     var field_mask = cast[uint64]((end_mask or sep_mask) and not quote_mask)
 
@@ -167,19 +169,22 @@ template debug_parse_row() =
     echo " Char: ", c
 
 
+proc addBuffer*(ctx: var ParseContext, buffer: Buffer) =
+  ctx.active_buffer_idx += 1
+  ctx.buffers.add(buffer)
+
+
 proc readBuffer*(ctx: var ParseContext, prev_buffer: Buffer, start_index: int): uint32 =
   var buffer = allocBuffer(prev_buffer, start_index)
-  ctx.active_buffer_idx += 1
-  let num_bytes = readIntoBuffer(ctx.file, buffer, BUFFER_SIZE - start_index)
-  ctx.buffers.add(move buffer)
+  let num_bytes = readIntoBuffer(ctx.file, buffer, ctx.buffer_size - start_index)
+  ctx.addBuffer(buffer)
   return num_bytes
 
 
 proc readBuffer*(ctx: var ParseContext): uint32 =
-  var buffer = allocBuffer(BUFFER_SIZE)
-  ctx.active_buffer_idx += 1
+  var buffer = allocBuffer(ctx.buffer_size)
   let num_bytes = readIntoBuffer(ctx.file, buffer)
-  ctx.buffers.add(move buffer)
+  ctx.addBuffer(buffer)
   return num_bytes
 
 
@@ -193,11 +198,12 @@ iterator parse_rows*(ctx: var ParseContext): Row =
     row = Row(fields: @[])
     end_of_line = false
     field_start: int32
+    prev_iter_inside_quote: int32 = 0
 
   if not ctx.has_active_buffer():
     bytes_read = ctx.readBuffer()
     buffer = ctx.activeBuffer()
-    indexes = parse_separators(buffer, '\n')
+    indexes = ctx.parse_separators()
 
   while bytes_read > 0:
     buffer_count += 1
@@ -236,7 +242,18 @@ iterator parse_rows*(ctx: var ParseContext): Row =
         yield row
       break
     buffer = ctx.activeBuffer()
-    indexes = parse_separators(buffer, '\n')
+    indexes = ctx.parse_separators()
+
+
+proc createParseContext*(file: File, buffer_size: int, separator: char = '\n'): ParseContext =
+  ParseContext(
+    file: file,
+    buffer_size: buffer_size,
+    active_buffer_idx: -1,
+    buffers: @[],
+    separator: separator,
+    prev_iter_inside_quote: 0
+  )
 
 
 proc main*() =
@@ -250,11 +267,7 @@ proc main*() =
     buffer_count = 0
     row_start_idx: uint32 = 0
     rows = newSeq[Row]()
-    ctx = ParseContext(
-      file: f,
-      active_buffer_idx: -1,
-      buffers: @[]
-    )
+    ctx = createParseContext(f, BUFFER_SIZE)
     last_row = Row(
       fields: @[],
       next_start: 0,
