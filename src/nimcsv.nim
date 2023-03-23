@@ -20,7 +20,7 @@ proc builtin_ctzll(x: uint64): uint32 {.importc: "__builtin_ctzll", cdecl.}
 
 const
   DEBUG = false
-  DEBUG_SEP_PARSER = false
+  DEBUG_SEP_PARSER = true
 
 
 type
