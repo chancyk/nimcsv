@@ -29,9 +29,9 @@ ctx.addBuffer(buffer1)
 let indexes1 = ctx.parse_separators()
 
 var buffer2 = b.allocBuffer(256)
-buffer2.add  """bb,bb"bbbbbbbbbbbbbbbbbbbbbbb|bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"""
+buffer2.add  """bb,bb"bbbbbbbbbbbbbbbbbbbbbbb|bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"""  # quote wraps from 256
 fields.add   """0000000000000000000000000000010000000000000000000000000000000000"""
-buffer2.add  """cccccccccc|"cccccccc""c,c""cccccccccccc"|ccccccccc"ccc|ccc"ccccc"""
+buffer2.add  """cccccccccc|"cccccccc""c,c""cccccccccccc"|ccccccccc"ccc|ccc"ccccc"""  # sep inside of quotes and escaped quotes
 fields.add   """0000000000100000000000000000000000000000100000000000000000000000"""
 ctx.addBuffer(buffer2)
 let indexes2 = ctx.parse_separators()
