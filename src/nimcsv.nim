@@ -6,6 +6,7 @@ from std/unicode import reversed
 import nimsimd/[avx2, pclmulqdq]
 from nimsimd/avx import M256i
 
+from buffer import allocBuffer, readIntoBuffer, Buffer, toString, BUFFER_SIZE
 from python import PyObject, PyBytes_AsStringAndSize, PyNone
 
 
@@ -20,17 +21,16 @@ proc builtin_ctzll(x: uint64): uint32 {.importc: "__builtin_ctzll", cdecl.}
 const
   DEBUG = false
   DEBUG_SEP_PARSER = false
-  BUFFER_SIZE* = 65536
 
 
 type
-  Buffer* = ptr UncheckedArray[char]
   ParseContext* = ref object
+    file*: File
     active_buffer_idx: int
     buffers: seq[Buffer]
 
   Row* = ref object
-    fields: seq[ptr PyObject]
+    fields: seq[cstring]
     field_count: uint16
     next_start: int32
     next_end: int
@@ -41,7 +41,10 @@ type
     hi*: M256i
 
 
-template active_buffer(ctx: ParseContext): Buffer =
+template has_active_buffer*(ctx: ParseContext): bool =
+  ctx.active_buffer_idx >= 0
+
+template activeBuffer*(ctx: ParseContext): Buffer =
   ctx.buffers[ctx.active_buffer_idx]
 
 
@@ -57,8 +60,8 @@ proc count_trailing_zeroes*(input_num: uint64): uint32 {.inline.} =
   return builtin_ctzll(input_num)
 
 
-proc print_text(buffer: var seq[char], i: uint32) =
-  echo "Text: ", cast[seq[char]](buffer[i ..< i+64]).join("")
+proc print_text(buffer: Buffer, i: int) =
+  echo "Text: ", buffer.toString(i, i + 63).replace("\n", "|")
 
 
 proc print_bits(label: string, x: uint64) =
@@ -70,7 +73,7 @@ proc print_bits(label: string, x: int64) =
   print_bits(label, cast[uint64](x))
 
 
-proc flatten_bits*(indexes: var seq[int32]; idx: uint32; bits: var uint64) {.inline.} =
+proc flatten_bits*(indexes: var seq[int32]; idx: int; bits: var uint64) {.inline.} =
   ##  Convert a bit mask to the integer indexes of each set bit:
   ##
   ##    00100100 -> [5, 2]
@@ -88,7 +91,7 @@ proc flatten_bits*(indexes: var seq[int32]; idx: uint32; bits: var uint64) {.inl
   ##  The trailing zeroes are then counted, as above, to get the index position.
   if bits != 0:
     while true:
-      indexes.add  cast[int32](idx + count_trailing_zeroes(bits))
+      indexes.add  cast[int32](idx.uint32 + count_trailing_zeroes(bits))
       bits = bits and (bits - 1)
       if bits == 0:
         break
@@ -112,27 +115,25 @@ template debug_parse_separators() =
     print_bits("Sepr: ", sep_mask)
     print_bits("Newl: ", end_mask)
     print_bits("Fld0: ", field_mask)
-    echo fmt"[{idx_count}:{indexes.len}] "
-    echo indexes[idx_count ..< indexes.len]
+    # echo fmt"[{idx_count}:{indexes.len}] "
+    # echo indexes[idx_count ..< indexes.len]
     idx_count = indexes.len
 
 
-proc parse_separators*(buffer: var Buffer, bytes_read: uint32): seq[int32] =
+proc parse_separators*(buffer: Buffer, separator: char): seq[int32] =
   var input = SIMD_Input()
   var indexes = newSeq[int32]()
   var prev_iter_inside_quote: int64 = 0
 
-  when DEBUG:
+  when DEBUG_SEP_PARSER:
     var idx_count = 0
 
-  if bytes_read != BUFFER_SIZE:
-    # TODO: Need to make sure a tail shorter than 64 actually works.
-    return indexes
-
-  var i: uint32 = 0
-  while i < bytes_read:
-    input.lo = mm256_loadu_si256(buffer[i + 0].addr)
-    input.hi = mm256_loadu_si256(buffer[i + 32].addr)
+  var i = 0
+  while i < buffer.size:
+    # echo buffer.raw.toOpenArray(i +  0, i +  0 + 256)
+    # echo buffer.raw.toOpenArray(i + 32, i + 32 + 256)
+    input.lo = mm256_loadu_si256(buffer.raw[i +  0].addr)
+    input.hi = mm256_loadu_si256(buffer.raw[i + 32].addr)
     when DEBUG_SEP_PARSER:
       print_text(buffer, i)
 
@@ -148,12 +149,12 @@ proc parse_separators*(buffer: var Buffer, bytes_read: uint32): seq[int32] =
     ##  FIND COMMAS
     let sep_mask = cmp_mask_against_input(input, ','.uint8)
     ##  FIND NEWLINES
-    let end_mask = cmp_mask_against_input(input, uint8(0x0a))
+    let end_mask = cmp_mask_against_input(input, separator.uint8)
     ## Separators that are not quoted.
     var field_mask = cast[uint64]((end_mask or sep_mask) and not quote_mask)
 
-    flatten_bits(indexes, i, field_mask)
     debug_parse_separators()
+    flatten_bits(indexes, i, field_mask)
     inc(i, 64)
 
   return indexes
@@ -166,51 +167,76 @@ template debug_parse_row() =
     echo " Char: ", c
 
 
-proc parse_row(buffer: var Buffer, indexes: seq[int32], line_field_start: int32, end_idx: int): Row =
+proc readBuffer*(ctx: var ParseContext, prev_buffer: Buffer, start_index: int): uint32 =
+  var buffer = allocBuffer(prev_buffer, start_index)
+  ctx.active_buffer_idx += 1
+  let num_bytes = readIntoBuffer(ctx.file, buffer, BUFFER_SIZE - start_index)
+  ctx.buffers.add(move buffer)
+  return num_bytes
+
+
+proc readBuffer*(ctx: var ParseContext): uint32 =
+  var buffer = allocBuffer(BUFFER_SIZE)
+  ctx.active_buffer_idx += 1
+  let num_bytes = readIntoBuffer(ctx.file, buffer)
+  ctx.buffers.add(move buffer)
+  return num_bytes
+
+
+iterator parse_rows*(ctx: var ParseContext): Row =
   var
+    buffer_count = 0
+    prev_buffer: Buffer
+    buffer: Buffer
+    bytes_read: uint32
+    indexes: seq[int32]
     row = Row(fields: @[])
     end_of_line = false
-    field_start = line_field_start
+    field_start: int32
 
-  for i in end_idx ..< indexes.len:
-    let sep_idx = indexes[i]
-    let c = buffer[sep_idx]
-      # echo "Field: ", buffer[field_start .. sep_idx - 1]
-    if c == '\n':
-      end_of_line = true
-    buffer[sep_idx] = '\0'
-    let field_end = sep_idx - 1
-    debug_parse_row()
-    if field_end < field_start:
-      row.fields.add  PyNone()
-    else:
-      row.fields.add  PyBytes_AsStringAndSize(cast[cstring](buffer[field_start].addr), cint(sep_idx - field_start))
+  if not ctx.has_active_buffer():
+    bytes_read = ctx.readBuffer()
+    buffer = ctx.activeBuffer()
+    indexes = parse_separators(buffer, '\n')
 
-    row.field_count += 1
-    field_start = sep_idx + 1
+  while bytes_read > 0:
+    buffer_count += 1
+    for i in 0 ..< indexes.len:
+      let sep_idx = indexes[i]
+      let c = buffer.raw[sep_idx]
+      if c == '\n':
+        end_of_line = true
 
-    if end_of_line:
-      if i + 1 == indexes.len:
-        row.next_start = 0
-        row.next_end = 0
-        row.last_line = true
+      buffer.raw[sep_idx] = '\0'
+      let field_end = sep_idx - 1
+      debug_parse_row()
+      if field_end < field_start:
+        row.fields.add  nil
       else:
-        row.next_start = sep_idx + 1
-        row.next_end = i + 1
-        row.last_line = false
-      return row
+        row.fields.add  cast[cstring](buffer.raw[field_start].addr)
 
-  row.next_start = 0
-  row.last_line = true
-  return row
+      row.field_count += 1
+      field_start = sep_idx + 1
 
+      if end_of_line:
+        field_start = sep_idx + 1
+        yield row
+        row = Row(fields: @[])
+        end_of_line = false
 
-proc readBuffer(ctx: var ParseContext, f: File): uint32 =
-  var buffer = cast[Buffer](alloc(BUFFER_SIZE * sizeof(char)))
-  ctx.buffers.add(buffer)
-  ctx.active_buffer_idx += 1
-  let bytes_read = cast[uint32](readBuffer(f, ctx.active_buffer, BUFFER_SIZE))
-  return bytes_read
+    # parse the next buffer and continue
+    prev_buffer = buffer
+    if field_start < prev_buffer.size:
+      bytes_read = ctx.readBuffer(prev_buffer, field_start)
+    else:
+      bytes_read = ctx.readBuffer()
+
+    if bytes_read == 0:
+      if row.field_count > 0:
+        yield row
+      break
+    buffer = ctx.activeBuffer()
+    indexes = parse_separators(buffer, '\n')
 
 
 proc main*() =
@@ -221,12 +247,11 @@ proc main*() =
     quit(1)
 
   var
-    buffer: Buffer
     buffer_count = 0
     row_start_idx: uint32 = 0
-    bytes_read: uint32 = 0
     rows = newSeq[Row]()
     ctx = ParseContext(
+      file: f,
       active_buffer_idx: -1,
       buffers: @[]
     )
@@ -236,28 +261,17 @@ proc main*() =
       next_end: 0
     )
 
-  bytes_read = ctx.readBuffer(f)
-  while bytes_read > 0:
-    buffer_count += 1
-    buffer = ctx.active_buffer()
-    let indexes = parse_separators(buffer, bytes_read)
-    while true:
-      let row = parse_row(buffer, indexes, last_row.next_start, last_row.next_end)
-      last_row = row
+  # each buffer
+  var row_count = 0
+  for row in ctx.parse_rows():
+    row_count += 1
+    if row.field_count > 0:
       rows.add(row)
-      if row.last_line:
-        break
-
-    bytes_read = ctx.readBuffer(f)
-    if buffer_count mod 1000 == 0:
-      let t1 = getMonotime()
-      echo "Buffer: ", buffer_count
-      echo "Elapsed: ", (t1 - t0).inMilliseconds.float64 / 1000.0
+    if row_count mod 100_000 == 0:
+      echo "Row #: ", row_count
 
   let t2 = getMonoTime()
   var time_in_seconds = (t2 - t0).inMilliseconds.float64 / 1000.0
   echo "Elapsed: ", time_in_seconds, "s"
   echo " # Rows: ", rows.len
   echo " # Buffers: ", buffer_count
-
-main()
