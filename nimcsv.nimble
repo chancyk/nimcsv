@@ -10,8 +10,8 @@ bin           = @["nimcsv"]
 # Dependencies
 requires "nimsimd >= 1.2.5"
 
-task prod, "compile and run release version":
-    exec "nim c -r -d:release --gc:arc --passC:-IC:\\Python38\\include --passL:C:\\Python38\\python38.dll -o:./bin/nimcsv.exe src/nimcsv.nim"
+task sample, "compile and run the sample":
+    exec "nim c -r -d:release --gc:arc --passC:-IC:\\Python38\\include --passL:C:\\Python38\\python38.dll -o:./bin/nimcsv.exe src/main.nim"
 
 task test, "run tests":
     exec "nim r --gc:arc ./tests/tparse.nim"
