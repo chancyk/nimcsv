@@ -18,5 +18,6 @@ task sampleprof, "compile and run the sample":
     exec "nim c -r -d:release --stackTrace:on --debugger:native --gc:arc --passC:-IC:\\Python38\\include --passL:C:\\Python38\\python38.dll -o:./bin/nimcsv.exe src/main.nim"
 
 task test, "run tests":
-    exec "nim r --gc:arc ./tests/tparse.nim"
-    exec "nim r --gc:arc ./tests/tbuffer.nim"
+    exec "nim r --gc:arc --verbosity:0 --hints:off ./tests/tparse.nim"
+    exec "nim r --gc:arc --verbosity:0 --hints:off ./tests/tbuffer.nim"
+    exec "nim r --gc:arc --verbosity:0 --hints:off ./tests/trows.nim"

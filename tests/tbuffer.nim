@@ -1,6 +1,6 @@
 import std/strutils
 
-import nimsimd/[avx2, pclmulqdq]
+import nimsimd/avx2
 from nimsimd/avx import M256i
 
 import ../src/buffer

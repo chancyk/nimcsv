@@ -5,7 +5,7 @@ import nimsimd/[avx2, pclmulqdq]
 from nimsimd/avx import M256i
 
 from buffer import allocBuffer, readIntoBuffer, Buffer, toString, BUFFER_SIZE
-from python import PyObject, PyBytes_AsStringAndSize, PyNone
+# from python import PyObject, PyBytes_AsStringAndSize, PyNone
 
 
 when defined(gcc) or defined(clang):
@@ -35,8 +35,8 @@ type
     num_fields: int
 
   Row* = ref object
-    fields: seq[cstring]
-    field_count: uint16
+    fields*: seq[cstring]
+    field_count*: uint16
 
   SIMD_Input* = ref object
     lo*: M256i
@@ -217,16 +217,13 @@ iterator parse_rows*(ctx: var ParseContext): Row =
       buffer.raw[sep_idx] = '\0'
       let field_end = sep_idx - 1
       debug_parse_row()
-      if field_end < field_start:
-        row.fields.add nil
-      else:
+      if field_end >= field_start:
         row.fields.add cast[cstring](buffer.raw[field_start].addr)
+        row.field_count += 1
 
-      row.field_count += 1
       field_start = sep_idx + 1
 
       if end_of_line:
-        field_start = sep_idx + 1
         yield row
         row_count += 1
         row = ctx.createRow()
@@ -241,6 +238,7 @@ iterator parse_rows*(ctx: var ParseContext): Row =
       ## we need to take the state before that possible quote.
       ctx.prev_iter_inside_quote = (ctx.quote_mask shl remaining) shr 63
       bytes_read = ctx.readBuffer(prev_buffer, field_start)
+      field_start = 0
     else:
       ctx.prev_iter_inside_quote = ctx.quote_mask shr 63
       bytes_read = ctx.readBuffer()
