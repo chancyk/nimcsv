@@ -3,9 +3,11 @@ from std/unicode import reversed
 
 import nimsimd/[avx2, pclmulqdq]
 from nimsimd/avx import M256i
-import nimpy
-from nimpy/py_types import PPyObject
-from nimpy/py_lib import PyLib, loadPyLibFromThisProcess
+
+when defined(export_python):
+  import nimpy
+  from nimpy/py_types import PPyObject
+  from nimpy/py_lib import PyLib, loadPyLibFromThisProcess
 
 import ./fastfloat
 from ./buffer import allocBuffer, readIntoBuffer, Buffer, toString, BUFFER_SIZE
@@ -36,26 +38,25 @@ type
     quote_mask: int64
     prev_iter_inside_quote: int64
     num_fields: int
-    # pylib: PyLib
-
-  Row* = object
-    fields*: seq[PPyObject]
-    # fields*: seq[Value]
-    # field_lengths*: seq[uint16]
-    field_count*: uint16
-
-  ValueKind* = enum Number, Text
-  Value* = object
-    text: cstring
-    case kind: ValueKind
-    of Number:
-      value: float64
-    of Text:
-      discard
 
   SIMD_Input* = ref object
     lo*: M256i
     hi*: M256i
+
+when defined(export_python):
+  type
+    Row* = object
+      fields*: seq[PPyObject]
+      # fields*: seq[Value]
+      # field_lengths*: seq[uint16]
+      field_count*: uint16
+else:
+  type
+    Row* = object
+      fields*: seq[cstring]
+      # fields*: seq[Value]
+      # field_lengths*: seq[uint16]
+      field_count*: uint16
 
 
 template has_active_buffer*(ctx: ParseContext): bool =
@@ -201,11 +202,33 @@ proc readBuffer*(ctx: var ParseContext): uint32 =
   return num_bytes
 
 
-proc createRow(ctx: ParseContext): Row =
-  result = Row(
-    fields: newSeqOfCap[PPyObject](ctx.num_fields)
-    # field_lengths: newSeqOfCap[uint16](ctx.num_fields)
-  )
+when defined(export_python):
+  proc createRow(ctx: ParseContext): Row =
+    result = Row(fields: newSeqOfCap[PPyObject](ctx.num_fields))
+else:
+  proc createRow(ctx: ParseContext): Row =
+    result = Row(fields: newSeqOfCap[cstring](ctx.num_fields))
+
+
+when defined(export_python):
+  template convertValue(buffer: Buffer, field_start: int32, field_end: int32) =
+    var field_first = cast[cstring](buffer.raw[field_start].addr)
+    var field_last = cast[cstring](buffer.raw[field_end].addr)
+    var value: float64
+    let error = from_chars(field_first, field_last, value)
+    if error.ec == NoError:
+      row.fields.add  nimValueToPy(value)
+    elif field_first == field_last and buffer.raw[field_start] == '0':
+      row.fields.add  nimValueToPy(0)
+    elif field_first[0] == '"' and field_last[0] == '"':
+      buffer.raw[field_end] = '\0'
+      field_first = cast[cstring](buffer.raw[field_start + 1].addr)
+      row.fields.add  nimValueToPy(field_first)
+    else:
+      row.fields.add  nimValueToPy(field_first)
+else:
+  template convertValue(buffer: Buffer, field_start: int32, field_end: int32) =
+    row.fields.add  cast[cstring](buffer.raw[field_start].addr)
 
 
 iterator parse_rows*(ctx: var ParseContext): Row =
@@ -236,24 +259,7 @@ iterator parse_rows*(ctx: var ParseContext): Row =
       let field_end = sep_idx - 1
       debug_parse_row()
       if field_end >= field_start:
-        # let field_length = (sep_idx - field_start).Py_ssize_t
-        # let cstr = buffer.raw[field_start].addr
-        # let pyobj = cast[PPyObject](ctx.pylib.PyUnicode_FromString(cstr))
-        var field_first = cast[cstring](buffer.raw[field_start].addr)
-        var field_last = cast[cstring](buffer.raw[field_end].addr)
-        var value: float64
-        let error = from_chars(field_first, field_last, value)
-        if error.ec == NoError:
-          row.fields.add  nimValueToPy(value)
-        elif field_first == field_last and buffer.raw[field_start] == '0':
-          row.fields.add  nimValueToPy(0)
-        elif field_first[0] == '"' and field_last[0] == '"':
-          buffer.raw[field_end] = '\0'
-          field_first = cast[cstring](buffer.raw[field_start + 1].addr)
-          row.fields.add  nimValueToPy(field_first)
-        else:
-          row.fields.add  nimValueToPy(field_first)
-        # row.field_lengths.add (sep_idx - field_start).uint16
+        convertValue(buffer, field_start, field_end)
         row.field_count += 1
 
       field_start = sep_idx + 1
