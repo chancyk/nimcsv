@@ -1,10 +1,11 @@
 import std/[times, monotimes, strformat, strutils]
 from std/unicode import reversed
+from std/parseutils import parseInt, parseFloat
 
 import nimsimd/[avx2, pclmulqdq]
 from nimsimd/avx import M256i
 
-when defined(export_python):
+when defined(export_pymod):
   import nimpy
   from nimpy/py_types import PPyObject
   from nimpy/py_lib import PyLib, loadPyLibFromThisProcess
@@ -43,7 +44,13 @@ type
     lo*: M256i
     hi*: M256i
 
-when defined(export_python):
+type
+  ValueType* = enum
+    Text
+    Integer
+    Float
+
+when defined(export_pymod):
   type
     Row* = object
       fields*: seq[PPyObject]
@@ -202,7 +209,7 @@ proc readBuffer*(ctx: var ParseContext): uint32 =
   return num_bytes
 
 
-when defined(export_python):
+when defined(export_pymod):
   proc createRow(ctx: ParseContext): Row =
     result = Row(fields: newSeqOfCap[PPyObject](ctx.num_fields))
 else:
@@ -210,28 +217,63 @@ else:
     result = Row(fields: newSeqOfCap[cstring](ctx.num_fields))
 
 
-when defined(export_python):
-  template convertValue(buffer: Buffer, field_start: int32, field_end: int32) =
-    var field_first = cast[cstring](buffer.raw[field_start].addr)
-    var field_last = cast[cstring](buffer.raw[field_end].addr)
-    var value: float64
-    let error = from_chars(field_first, field_last, value)
-    if error.ec == NoError:
-      row.fields.add  nimValueToPy(value)
-    elif field_first == field_last and buffer.raw[field_start] == '0':
-      row.fields.add  nimValueToPy(0)
-    elif field_first[0] == '"' and field_last[0] == '"':
+when defined(export_pymod):
+  template convertToText(buffer: var Buffer): PPyObject =
+    if buffer.raw[field_start] == '"' and buffer.raw[field_end] == '"':
       buffer.raw[field_end] = '\0'
-      field_first = cast[cstring](buffer.raw[field_start + 1].addr)
-      row.fields.add  nimValueToPy(field_first)
+      let field_first = cast[cstring](buffer.raw[field_start + 1].addr)
+      nimValueToPy(field_first)
     else:
-      row.fields.add  nimValueToPy(field_first)
+      let field_first = cast[cstring](buffer.raw[field_start].addr)
+      nimValueToPy(field_first)
+
+  template convertToInteger(buffer: var Buffer): PPyObject =
+    var integerValue: int
+    if parseInt(buffer.raw.toOpenArray(field_start, field_end), integerValue) > 0:
+      nimValueToPy(integerValue)
+    else:
+      convertToText(buffer)
+
+  template convertToFloat(buffer: var Buffer): PPyObject =
+    var floatValue: float64
+    if parseFloat(buffer.raw.toOpenArray(field_start, field_end), floatValue) > 0:
+      nimValueToPy(floatValue)
+    else:
+      convertToText(buffer)
+
+  template convertValueDefault(buffer: var Buffer): PPyObject =
+    convertToFloat(buffer)
+
+  template convertValue(buffer: var Buffer) =
+    if field_end >= field_start:
+      var value: float64
+      if schema.len > 0 and row.field_count.int < schema.len:
+        case schema[row.field_count]:
+        of ValueType.Text:
+          row.fields.add  convertToText(buffer)
+        of ValueType.Integer:
+          row.fields.add  convertToInteger(buffer)
+        of ValueType.Float:
+          row.fields.add  convertToFloat(buffer)
+      else:
+        row.fields.add  convertValueDefault(buffer)
+
+      row.field_count += 1
+
+    elif not end_of_line:
+      row.fields.add  nimValueToPy(nil)
+      row.field_count += 1
 else:
-  template convertValue(buffer: Buffer, field_start: int32, field_end: int32) =
-    row.fields.add  cast[cstring](buffer.raw[field_start].addr)
+  template convertValue(buffer: Buffer) =
+    if field_end >= field_start:
+      row.fields.add  cast[cstring](buffer.raw[field_start].addr)
+      row.field_count += 1
+    elif not end_of_line:
+      row.fields.add  nil
+      row.field_count += 1
 
 
-iterator parse_rows*(ctx: var ParseContext): Row =
+iterator parse_rows*(ctx: var ParseContext, schema: seq[ValueType]): Row =
   var
     row_count = 0
     buffer_count = 0
@@ -258,10 +300,7 @@ iterator parse_rows*(ctx: var ParseContext): Row =
       buffer.raw[sep_idx] = '\0'
       let field_end = sep_idx - 1
       debug_parse_row()
-      if field_end >= field_start:
-        convertValue(buffer, field_start, field_end)
-        row.field_count += 1
-
+      convertValue(buffer)
       field_start = sep_idx + 1
 
       if end_of_line:
@@ -283,6 +322,7 @@ iterator parse_rows*(ctx: var ParseContext): Row =
     else:
       ctx.prev_iter_inside_quote = ctx.quote_mask shr 63
       bytes_read = ctx.readBuffer()
+      field_start = 0
 
     if bytes_read == 0:
       if row.field_count > 0:
@@ -321,14 +361,12 @@ proc main*() =
     quit(1)
 
   var
-    buffer_count = 0
-    row_start_idx: uint32 = 0
     rows = newSeq[Row]()
     ctx = createParseContext(f, BUFFER_SIZE, num_fields=85)
 
   # each buffer
   var row_count = 0
-  for row in ctx.parse_rows():
+  for row in ctx.parse_rows(schema=newSeq[ValueType]()):
     row_count += 1
     rows.add(row)
     if row_count mod 100_000 == 0:
@@ -338,4 +376,3 @@ proc main*() =
   var time_in_seconds = (t2 - t0).inMilliseconds.float64 / 1000.0
   echo "Elapsed: ", time_in_seconds, "s"
   echo " # Rows: ", rows.len
-  echo " # Buffers: ", buffer_count

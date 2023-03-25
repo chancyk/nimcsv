@@ -3,17 +3,21 @@ from nimpy/py_types import PPyObject
 
 import ./nimcsv
 from ./buffer import BUFFER_SIZE
-from ./python import PyBytes_AsStringAndSize
 
 
-iterator read_rows(filepath: string): seq[PPyObject]  {.exportpy.} =
-    var f = open(filepath, fmRead)
-    if f == nil:
-      quit(1)
+proc read_header*(filepath: string): seq[PPyObject] {.exportpy.} =
+  var
+    file = open(filepath, fmRead)
+    ctx = createParseContext(file, BUFFER_SIZE)
 
-    var
-      rows = newSeq[Row]()
-      ctx = createParseContext(f, BUFFER_SIZE, num_fields=85)
+  for row in ctx.parse_rows(schema=newSeq[ValueType]()):
+    return row.fields
 
-    for row in ctx.parse_rows():
-      yield row.fields
+
+iterator read_rows*(filepath: string, schema: seq[ValueType]): seq[PPyObject]  {.exportpy.} =
+  var
+    file = open(filepath, fmRead)
+    ctx = createParseContext(file, BUFFER_SIZE, num_fields=schema.len)
+
+  for row in ctx.parse_rows(schema):
+    yield row.fields
