@@ -14,16 +14,16 @@ requires "nimpy >= 0.2.0"
 
 task sample, "compile and run the sample":
     # --passC:-IC:\\Python38\\include --passL:C:\\Python38\\python38.dll
-    exec "nim cpp -r -d:release --gc:arc -o:./bin/nimcsv.exe src/main.nim"
+    exec "nim cpp -r -d:release --mm:arc -o:./bin/nimcsv.exe src/main.nim"
 
 task sampleprof, "compile and run the sample":
-    exec "nim cpp -r -d:exportpymod --stackTrace:on --debugger:native --gc:arc -o:./bin/nimcsv.exe src/main.nim"
+    exec "nim cpp -r -d:exportpymod --stackTrace:on --debugger:native --mm:arc -o:./bin/nimcsv.exe src/main.nim"
 
 task debug, "compile with debug flags":
-    exec "nim cpp -r -d:exportpymod --gc:arc -o:./bin/nimcsv.exe ./src/main.nim"
+    exec "nim cpp -r -d:exportpymod --mm:arc -o:./bin/nimcsv.exe ./src/main.nim"
 
 task pymod, "build the nimpy python module":
-    exec "nim cpp -d:release -d:exportpymod --app:lib --out:./bin/pynimcsv.pyd --threads:on --tlsEmulation:off --passL:-static --gc:arc ./src/pynimcsv.nim"
+    exec "nim cpp -d:release -d:exportpymod --app:lib --out:./bin/pynimcsv.pyd --threads:on --tlsEmulation:off --passL:-static --mm:arc ./src/pynimcsv.nim"
 
 task vtunepy, "build pymod and run vtune":
     # generates a vtune_report directory
