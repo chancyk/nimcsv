@@ -47,8 +47,10 @@ type
     hi*: M256i
 
 type
+  ## Must match the Enum declaracter in nimcsv.py
   ValueType* = enum
     Skip
+    Default
     Text
     Integer
     Float
@@ -134,9 +136,6 @@ template debug_parse_separators() =
     print_bits("Sepr: ", sep_mask)
     print_bits("Newl: ", end_mask)
     print_bits("Fld0: ", field_mask)
-    # echo fmt"[{idx_count}:{indexes.len}] "
-    # echo indexes[idx_count ..< indexes.len]
-    idx_count = indexes.len
 
 
 proc parseSeparators*(ctx: var ParseContext): seq[int32] =
@@ -235,7 +234,16 @@ when defined(export_pymod):
       convertToText(buffer)
 
   template convertValueDefault(buffer: var Buffer): PPyObject =
-    convertToFloat(buffer)
+    var try_float: bool
+    for c in buffer.raw.toOpenArray(field_start, field_end):
+      if c == '.':
+        try_float = true
+        break
+
+    if try_float:
+      convertToFloat(buffer)
+    else:
+      convertToInteger(buffer)
 
   template addConvertedValue(row: var Row, buffer: var Buffer) =
     if field_end >= field_start:
@@ -243,7 +251,9 @@ when defined(export_pymod):
         if field_count < schema.len:
           case schema[field_count]:
           of ValueType.Skip:
-            discard                            # field was not in the schema
+            discard
+          of ValueType.Default:
+            row.add  convertValueDefault(buffer)
           of ValueType.Text:
             row.add  convertToText(buffer)
           of ValueType.Integer:
@@ -251,14 +261,28 @@ when defined(export_pymod):
           of ValueType.Float:
             row.add  convertToFloat(buffer)
         else:
-          discard                              # row has more fields than schema
+          if only_schema:
+            discard                              # row has more fields than schema
+          else:
+            row.add  convertValueDefault(buffer)
       else:
         row.add  convertValueDefault(buffer)   # no schema to default conversion
 
     elif not end_of_line:
-      if schema.len > 0 and field_count < schema.len:
-        if schema[field_count] != ValueType.Skip:
-          row.add  nimValueToPy(nil)
+      if schema.len > 0:
+        if field_count < schema.len:
+          if schema[field_count] != ValueType.Skip:
+            row.add  nimValueToPy(nil)
+          else:
+            discard
+        else:
+          if not only_schema:
+            row.add  nimValueToPy(nil)
+      else:
+        row.add  nimValueToPy(nil)
+    else:
+      # Is this correct?
+      discard
 else:
   template addConvertedValue(row: var Row, buffer: Buffer) =
     if field_end >= field_start:
@@ -267,7 +291,11 @@ else:
       row.add  nil
 
 
-iterator parse_rows*(ctx: var ParseContext, schema: seq[ValueType]): Row =
+template noSchema*(): seq[ValueType] =
+  newSeq[ValueType]()
+
+
+iterator parse_rows*(ctx: var ParseContext, schema: seq[ValueType], only_schema: bool = false): Row =
   var
     row_count = 0
     buffer_count = 0

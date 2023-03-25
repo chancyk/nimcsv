@@ -14,11 +14,11 @@ proc read_header*(filepath: string): seq[PPyObject] {.exportpy.} =
     return row
 
 
-iterator read_rows*(filepath: string, schema: seq[ValueType]): seq[PPyObject]  {.exportpy.} =
+iterator read_rows*(filepath: string, schema: seq[ValueType], only_schema: bool): seq[PPyObject]  {.exportpy.} =
   var
     row_num = 0
     file = open(filepath, fmRead)
     ctx = createParseContext(file, BUFFER_SIZE, num_fields=schema.len)
 
-  for row in ctx.parse_rows(schema=schema):
+  for row in ctx.parse_rows(schema=schema, only_schema=only_schema):
     yield row

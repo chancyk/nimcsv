@@ -11,7 +11,7 @@ proc string_to_bits(x: string): uint64 =
     cast[uint64](x.reversed.parseBinInt())
 
 
-var f = open("./tests/quotewrap.csv", fmRead)
+var f = open("./tests/trows_quotewrap.csv", fmRead)
 var ctx = createParseContext(f, 256)
 var expected = @[
     @["aaaaaaaaaaaaaaaaaaaaaaa", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
@@ -22,9 +22,9 @@ var expected = @[
     @["gg", "", "ggg"]
 ]
 var row_idx = 0
-for row in ctx.parse_rows():
-    echo fmt"[t:rows] Row [{row_idx}]: ", row.fields.join(", ").replace("\n", "|")
-    for field_idx, field in row.fields:
+for row in ctx.parse_rows(schema=noSchema()):
+    echo fmt"[t:rows] Row [{row_idx}]: ", row.join(", ").replace("\n", "|")
+    for field_idx, field in row:
         let expect = expected[row_idx][field_idx]
         assert $field == expect, fmt"{field} does not match {expect}"
     row_idx += 1

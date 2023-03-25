@@ -13,9 +13,10 @@ log.setLevel(logging.DEBUG)
 
 class ValueTypeEnum(Enum):
     Skip = 0
-    Text = 1
-    Integer = 2
-    Float = 3
+    Default = 1
+    Text = 2
+    Integer = 3
+    Float = 4
 
 
 FieldName = NewType('FieldName', str)
@@ -35,23 +36,33 @@ def to_schema_enum(value_type: ValueType) -> int:
         raise ValueError(f"{value_type} is not a valid ValueType.")
 
 
-def to_schema_vector(header: List[str], schema: Schema) -> List[int]:
+def to_schema_vector(header: List[str], schema: Schema, only_schema: bool, default: ValueTypeEnum) -> List[int]:
     schema_vec = []
     for i, field_name in enumerate(header):
         if field_name in schema:
             print(f"[CONV] {field_name} -> {schema[field_name].__name__}")
             schema_vec.append(to_schema_enum(schema[field_name]))
         else:
-            print(f"[SKIP] {field_name} not in schema.")
-            schema_vec.append(ValueTypeEnum.Skip.value)
+            if only_schema:
+                print(f"[SKIP] {field_name} not in schema.")
+                schema_vec.append(ValueTypeEnum.Skip.value)
+            else:
+                schema_vec.append(default.value)
 
     return schema_vec
 
 
 class Reader:
-    def __init__(self, filepath: str, schema: Schema):
+    def __init__(self,
+        filepath: str,
+        schema: Schema,
+        only_schema: bool = False,
+        default_type: ValueTypeEnum = ValueTypeEnum.Default
+    ):
         self.filepath = filepath
         self.schema = schema
+        self.only_schema = only_schema
+        self.default_type = default_type
         self._header = None
 
 
@@ -59,8 +70,8 @@ class Reader:
         if self._header is None:
             self._header = pynimcsv.read_header(self.filepath)
 
-        schema_vec = to_schema_vector(self._header, self.schema)
-        rows_iter = pynimcsv.read_rows(self.filepath, schema=schema_vec)
+        schema_vec = to_schema_vector(self._header, self.schema, self.only_schema, self.default_type)
+        rows_iter = pynimcsv.read_rows(self.filepath, schema=schema_vec, only_schema=self.only_schema)
         if skip_header:
             next(rows_iter)
 
