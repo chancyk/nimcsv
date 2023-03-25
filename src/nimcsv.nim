@@ -1,16 +1,23 @@
-import std/[times, monotimes, strformat, strutils]
-from std/unicode import reversed
+const
+  DEBUG = false
+  DEBUG_SEP_PARSER = false
+
+import std/[times, monotimes, strutils]
 from std/parseutils import parseInt, parseFloat
 
 import nimsimd/[avx2, pclmulqdq]
 from nimsimd/avx import M256i
 
+when DEBUG or DEBUG_SEP_PARSER:
+  import std/strformat
+  from std/unicode import reversed
+
 when defined(export_pymod):
   import nimpy
   from nimpy/py_types import PPyObject
-  from nimpy/py_lib import PyLib, loadPyLibFromThisProcess
+  # from nimpy/py_lib import PyLib, loadPyLibFromThisProcess
 
-import ./fastfloat
+
 from ./buffer import allocBuffer, readIntoBuffer, Buffer, toString, BUFFER_SIZE
 
 
@@ -20,11 +27,6 @@ when defined(gcc) or defined(clang):
 
 func builtin_popcountll(x: uint64): uint32 {.importc: "__builtin_popcountll", nodecl.}
 proc builtin_ctzll(x: uint64): uint32 {.importc: "__builtin_ctzll", cdecl.}
-
-
-const
-  DEBUG = false
-  DEBUG_SEP_PARSER = false
 
 
 type
