@@ -4,7 +4,7 @@ from typing import NewType, Union, List, Dict, Iterator
 
 import pynimcsv
 
-__ALL__ = ['parse_rows']
+__ALL__ = ['Reader']
 
 
 log = logging.getLogger(__name__)
@@ -48,11 +48,34 @@ def to_schema_vector(header: List[str], schema: Schema) -> List[int]:
     return schema_vec
 
 
-def read_rows(filepath: str, schema: Schema, skip_header: bool = True) -> Iterator[List[Row]]:
-    header = pynimcsv.read_header(filepath)
-    schema_vec = to_schema_vector(header, schema)
-    rows_iter = pynimcsv.read_rows(filepath, schema=schema_vec)
-    if skip_header:
-        next(rows_iter)
+class Reader:
+    def __init__(self, filepath: str, schema: Schema):
+        self.filepath = filepath
+        self.schema = schema
+        self._header = None
 
-    return rows_iter
+
+    def read_rows(self, skip_header: bool = True) -> Iterator[List[Row]]:
+        if self._header is None:
+            self._header = pynimcsv.read_header(self.filepath)
+
+        schema_vec = to_schema_vector(self._header, self.schema)
+        rows_iter = pynimcsv.read_rows(self.filepath, schema=schema_vec)
+        if skip_header:
+            next(rows_iter)
+
+        return rows_iter
+
+
+    def read_records(self, skip_header: bool = True) -> Iterator[Dict[FieldName, ValueType]]:
+        """Wraps Reader.read_rows and return a dict instead."""
+        if self._header is None:
+            self._header = pynimcsv.read_header(self.filepath)
+
+        selected = []
+        for field_name in self._header:
+            if field_name in self.schema:
+                selected.append(field_name)
+
+        for row in self.read_rows(skip_header):
+            yield dict(zip(selected, row))

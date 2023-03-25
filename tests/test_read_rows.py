@@ -33,7 +33,8 @@ schema = dict([
 ])
 
 num_rows = 0
-for row in nimcsv.read_rows(r"C:\Projects\nimcsv\sample.csv", schema=schema):
+reader = nimcsv.Reader(filepath=r"C:\Projects\nimcsv\sample.csv", schema=schema)
+for row in reader.read_rows():
     num_rows += 1
     if num_rows % 100_000 == 0:
         print("Row: ", num_rows)
