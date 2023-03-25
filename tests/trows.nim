@@ -18,12 +18,15 @@ var expected = @[
     @["bbbbbbbbbbbbbbbbbbbbbbb", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],
     @["ccccccccccccccccccccccc", "ccccccccccccccccccccccccccccccccccccccc"],
     @["dddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "\"quo\nted        , text     \"", "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"],
-    @["fffffffffffffffffffffff", "fffffffffffffffffffffffffffffffffffffff"]
+    @["fffffffffffffffffffffff", "fffffffffffffffffffffffffffffffffffffff"],
+    @["gg", "", "ggg"]
 ]
 var row_idx = 0
 for row in ctx.parse_rows():
-    echo fmt"Row [{row_idx}]: ", row.fields.join(", ").replace("\n", "|")
+    echo fmt"[t:rows] Row [{row_idx}]: ", row.fields.join(", ").replace("\n", "|")
     for field_idx, field in row.fields:
         let expect = expected[row_idx][field_idx]
         assert $field == expect, fmt"{field} does not match {expect}"
     row_idx += 1
+
+echo "[t:rows] OK"
