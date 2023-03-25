@@ -1,19 +1,21 @@
+import logging
 from enum import Enum
 from typing import NewType, Union, List, Dict, Iterator
-from logging import getLogger
 
 import pynimcsv
 
 __ALL__ = ['parse_rows']
 
 
-log = getLogger(__name__)
+log = logging.getLogger(__name__)
+log.setLevel(logging.DEBUG)
 
 
 class ValueTypeEnum(Enum):
-    Text = 0
-    Integer = 1
-    Float = 2
+    Skip = 0
+    Text = 1
+    Integer = 2
+    Float = 3
 
 
 FieldName = NewType('FieldName', str)
@@ -37,16 +39,20 @@ def to_schema_vector(header: List[str], schema: Schema) -> List[int]:
     schema_vec = []
     for i, field_name in enumerate(header):
         if field_name in schema:
+            print(f"[CONV] {field_name} -> {schema[field_name].__name__}")
             schema_vec.append(to_schema_enum(schema[field_name]))
         else:
-            log.warning(f"{field_name} was not found in the schema. Default to Text type.")
-            schema_vec.append(ValueTypeEnum.Text.value)
+            print(f"[SKIP] {field_name} not in schema.")
+            schema_vec.append(ValueTypeEnum.Skip.value)
 
     return schema_vec
 
 
-def read_rows(filepath: str, schema: Schema) -> Iterator[List[Row]]:
+def read_rows(filepath: str, schema: Schema, skip_header: bool = True) -> Iterator[List[Row]]:
     header = pynimcsv.read_header(filepath)
-    print(header)
     schema_vec = to_schema_vector(header, schema)
-    return pynimcsv.read_rows(filepath, schema=schema_vec)
+    rows_iter = pynimcsv.read_rows(filepath, schema=schema_vec)
+    if skip_header:
+        next(rows_iter)
+
+    return rows_iter

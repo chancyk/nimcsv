@@ -48,20 +48,17 @@ type
 
 type
   ValueType* = enum
+    Skip
     Text
     Integer
     Float
 
 when defined(export_pymod):
   type
-    Row* = object
-      fields*: seq[PPyObject]
-      field_count*: uint16
+    Row* = seq[PPyObject]
 else:
   type
-    Row* = object
-      fields*: seq[cstring]
-      field_count*: uint16
+    Row* = seq[cstring]
 
 
 template has_active_buffer*(ctx: ParseContext): bool =
@@ -83,17 +80,16 @@ proc count_trailing_zeroes*(input_num: uint64): uint32 {.inline.} =
   return builtin_ctzll(input_num)
 
 
-proc print_text(buffer: Buffer, i: int) =
-  echo "Text: ", buffer.toString(i, i + 63).replace("\n", "|")
+when DEBUG_SEP_PARSER:
+  proc print_text(buffer: Buffer, i: int) =
+    echo "Text: ", buffer.toString(i, i + 63).replace("\n", "|")
 
+  proc print_bits(label: string, x: uint64) =
+    var bits = fmt"{x:064b}".reversed()
+    echo label, bits
 
-proc print_bits(label: string, x: uint64) =
-  var bits = fmt"{x:064b}".reversed()
-  echo label, bits
-
-
-proc print_bits(label: string, x: int64) =
-  print_bits(label, cast[uint64](x))
+  proc print_bits(label: string, x: int64) =
+    print_bits(label, cast[uint64](x))
 
 
 proc flatten_bits*(indexes: var seq[int32]; idx: int; bits: var uint64) {.inline.} =
@@ -143,11 +139,9 @@ template debug_parse_separators() =
     idx_count = indexes.len
 
 
-proc parse_separators*(ctx: var ParseContext): seq[int32] =
+proc parseSeparators*(ctx: var ParseContext): seq[int32] =
   var input = SIMD_Input()
   var indexes = newSeqOfCap[int32](int(ctx.buffer_size / 4))
-  var idx_count = 0
-
   let buffer = ctx.active_buffer()
 
   var i = 0
@@ -210,10 +204,10 @@ proc readBuffer*(ctx: var ParseContext): uint32 =
 
 when defined(export_pymod):
   proc createRow(ctx: ParseContext): Row =
-    result = Row(fields: newSeqOfCap[PPyObject](ctx.num_fields))
+    result = newSeq[PPyObject]()
 else:
   proc createRow(ctx: ParseContext): Row =
-    result = Row(fields: newSeqOfCap[cstring](ctx.num_fields))
+    result = newSeq[cstring]()
 
 
 when defined(export_pymod):
@@ -243,33 +237,34 @@ when defined(export_pymod):
   template convertValueDefault(buffer: var Buffer): PPyObject =
     convertToFloat(buffer)
 
-  template convertValue(buffer: var Buffer) =
+  template addConvertedValue(row: var Row, buffer: var Buffer) =
     if field_end >= field_start:
-      var value: float64
-      if schema.len > 0 and row.field_count.int < schema.len:
-        case schema[row.field_count]:
-        of ValueType.Text:
-          row.fields.add  convertToText(buffer)
-        of ValueType.Integer:
-          row.fields.add  convertToInteger(buffer)
-        of ValueType.Float:
-          row.fields.add  convertToFloat(buffer)
+      if schema.len > 0:
+        if field_count < schema.len:
+          case schema[field_count]:
+          of ValueType.Skip:
+            discard                            # field was not in the schema
+          of ValueType.Text:
+            row.add  convertToText(buffer)
+          of ValueType.Integer:
+            row.add  convertToInteger(buffer)
+          of ValueType.Float:
+            row.add  convertToFloat(buffer)
+        else:
+          discard                              # row has more fields than schema
       else:
-        row.fields.add  convertValueDefault(buffer)
-
-      row.field_count += 1
+        row.add  convertValueDefault(buffer)   # no schema to default conversion
 
     elif not end_of_line:
-      row.fields.add  nimValueToPy(nil)
-      row.field_count += 1
+      if schema.len > 0 and field_count < schema.len:
+        if schema[field_count] != ValueType.Skip:
+          row.add  nimValueToPy(nil)
 else:
-  template convertValue(buffer: Buffer) =
+  template addConvertedValue(row: var Row, buffer: Buffer) =
     if field_end >= field_start:
-      row.fields.add  cast[cstring](buffer.raw[field_start].addr)
-      row.field_count += 1
+      row.add  cast[cstring](buffer.raw[field_start].addr)
     elif not end_of_line:
-      row.fields.add  nil
-      row.field_count += 1
+      row.add  nil
 
 
 iterator parse_rows*(ctx: var ParseContext, schema: seq[ValueType]): Row =
@@ -280,14 +275,15 @@ iterator parse_rows*(ctx: var ParseContext, schema: seq[ValueType]): Row =
     buffer: Buffer
     bytes_read: uint32
     indexes: seq[int32]
-    row = ctx.createRow()
     end_of_line = false
     field_start: int32
+    field_count: int
+    row = ctx.createRow()
 
   if not ctx.has_active_buffer():
     bytes_read = ctx.readBuffer()
     buffer = ctx.activeBuffer()
-    indexes = ctx.parse_separators()
+    indexes = ctx.parseSeparators()
 
   while bytes_read > 0:
     for i in 0 ..< indexes.len:
@@ -299,12 +295,14 @@ iterator parse_rows*(ctx: var ParseContext, schema: seq[ValueType]): Row =
       buffer.raw[sep_idx] = '\0'
       let field_end = sep_idx - 1
       debug_parse_row()
-      convertValue(buffer)
+      row.addConvertedValue(buffer)
       field_start = sep_idx + 1
+      field_count += 1
 
       if end_of_line:
         yield move row
         row_count += 1
+        field_count = 0
         row = ctx.createRow()
         end_of_line = false
 
@@ -324,11 +322,11 @@ iterator parse_rows*(ctx: var ParseContext, schema: seq[ValueType]): Row =
       field_start = 0
 
     if bytes_read == 0:
-      if row.field_count > 0:
+      if row.len > 0:
         yield move row
       break
     buffer = ctx.activeBuffer()
-    indexes = ctx.parse_separators()
+    indexes = ctx.parseSeparators()
 
 
 proc createParseContext*(
