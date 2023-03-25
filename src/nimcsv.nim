@@ -54,15 +54,11 @@ when defined(export_pymod):
   type
     Row* = object
       fields*: seq[PPyObject]
-      # fields*: seq[Value]
-      # field_lengths*: seq[uint16]
       field_count*: uint16
 else:
   type
     Row* = object
       fields*: seq[cstring]
-      # fields*: seq[Value]
-      # field_lengths*: seq[uint16]
       field_count*: uint16
 
 
@@ -185,6 +181,7 @@ proc parse_separators*(ctx: var ParseContext): seq[int32] =
 
 template debug_parse_row() =
   when DEBUG:
+    echo "Row #: ", row_count
     echo "Start: ", field_start
     echo "  End: ", field_end
     echo " Char: ", c
