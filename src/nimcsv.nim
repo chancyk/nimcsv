@@ -18,6 +18,7 @@ when defined(export_pymod):
   # from nimpy/py_lib import PyLib, loadPyLibFromThisProcess
 
 
+import ./fastfloat
 from ./buffer import allocBuffer, readIntoBuffer, Buffer, toString, BUFFER_SIZE
 
 
@@ -60,7 +61,23 @@ when defined(export_pymod):
     Row* = seq[PPyObject]
 else:
   type
-    Row* = seq[cstring]
+    RowValueKind* {.size: sizeof(uint8).} = enum
+      None
+      Text
+      Integer
+      Float
+
+    RowValue* = object
+      case kind: RowValueKind
+      of Text:
+        value_text: cstring
+      of Integer:
+        value_int: int
+      of Float:
+        value_float: float
+      of None:
+        discard
+    Row* = seq[RowValue]
 
 
 template has_active_buffer*(ctx: ParseContext): bool =
@@ -206,7 +223,7 @@ when defined(export_pymod):
     result = newSeq[PPyObject]()
 else:
   proc createRow(ctx: ParseContext): Row =
-    result = newSeq[cstring]()
+    result = newSeq[RowValue]()
 
 
 when defined(export_pymod):
@@ -284,11 +301,56 @@ when defined(export_pymod):
       # Is this correct?
       discard
 else:
+  template convertToText(buffer: var Buffer): RowValue =
+    if buffer.raw[field_start] == '"' and buffer.raw[field_end] == '"':
+      buffer.raw[field_end] = '\0'
+      let cstr = cast[cstring](buffer.raw[field_start + 1].addr)
+      RowValue(kind: Text, value_text: cstr)
+    else:
+      let cstr = cast[cstring](buffer.raw[field_start].addr)
+      RowValue(kind: Text, value_text: cstr)
+
+  template convertToInteger(buffer: var Buffer): RowValue =
+    var integerValue: int
+    if parseInt(buffer.raw.toOpenArray(field_start, field_end), integerValue) > 0:
+      RowValue(kind: Integer, value_int: integerValue)
+    else:
+      convertToText(buffer)
+
+  template convertToFloatNim(buffer: var Buffer): RowValue =
+    var floatValue: float64
+    if parseFloat(buffer.raw.toOpenArray(field_start, field_end), floatValue) > 0:
+      RowValue(kind: Float, value_float: floatValue)
+    else:
+      convertToText(buffer)
+
+  template convertToFloatFastFloat(buffer: var Buffer): RowValue =
+    var floatValue: float64
+    let field_first = cast[cstring](buffer.raw[field_start].addr)
+    let field_last = cast[cstring](buffer.raw[sep_idx].addr)
+    let error = from_chars(field_first, field_last, floatValue)
+    if cast[uint8](error.ec) == 0:
+      RowValue(kind: Float, value_float: floatValue)
+    else:
+      convertToText(buffer)
+
+  template convertValueDefault(buffer: var Buffer): RowValue =
+    var try_float: bool
+    for c in buffer.raw.toOpenArray(field_start, field_end):
+      if c == '.':
+        try_float = true
+        break
+
+    if try_float:
+      convertToFloat(buffer)
+    else:
+      convertToInteger(buffer)
+
   template addConvertedValue(row: var Row, buffer: Buffer) =
     if field_end >= field_start:
-      row.add  cast[cstring](buffer.raw[field_start].addr)
+      row.add  convertToFloatFastFloat(buffer)
     elif not end_of_line:
-      row.add  nil
+      row.add  RowValue(kind: None)
 
 
 template noSchema*(): seq[ValueType] =
@@ -386,7 +448,7 @@ proc main*() =
     quit(1)
 
   var
-    rows = newSeq[Row]()
+    rows = newSeqOfCap[Row](1_000_000)
     ctx = createParseContext(f, BUFFER_SIZE, num_fields=85)
 
   # each buffer
