@@ -17,7 +17,7 @@ task sample, "compile and run the sample":
     exec "nim cpp -r -d:release --mm:arc -o:./bin/nimcsv.exe src/main.nim"
 
 task sampleprof, "compile and run the sample":
-    exec "nim c -r -d:release --threads:on --stackTrace:on --debugger:native --mm:arc -o:./bin/nimcsv.exe src/main.nim"
+    exec "nim cpp -r -d:release --threads:on --tlsEmulation:off --stackTrace:on --debugger:native --mm:arc -o:./bin/nimcsv.exe src/main.nim"
 
 task debug, "compile with debug flags":
     exec "nim c -r --stackTrace:on --debugger:native --mm:arc -o:./bin/nimcsv.exe ./src/main.nim"
