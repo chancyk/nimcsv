@@ -2,7 +2,7 @@ const
   DEBUG = false
   DEBUG_SEP_PARSER = false
 
-import std/[times, monotimes, strutils]
+import std/[strutils]
 from std/parseutils import parseInt, parseFloat
 
 import nimsimd/[avx2, pclmulqdq]
