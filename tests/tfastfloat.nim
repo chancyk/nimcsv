@@ -37,3 +37,18 @@ block:
     echo "Input: ", text.join("")
     echo "Error: ", cast[uint8](error.ec)
     echo "Result: ", floatNumber
+
+
+block:
+    var text = newSeq[char]()
+    text.add '1'
+    text.add '\0'
+
+    let first = cast[cstring](text[0].addr)
+    let last = cast[cstring](text[^1].addr)
+
+    var floatNumber: float64
+    let error = from_chars(first, last, floatNumber)
+    echo "Input: ", text.join("")
+    echo "Error: ", cast[uint8](error.ec)
+    echo "Result: ", floatNumber

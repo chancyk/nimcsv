@@ -61,20 +61,20 @@ when defined(export_pymod):
     Row* = seq[PPyObject]
 else:
   type
-    RowValueKind* {.size: sizeof(uint8).} = enum
+    RowValueKind* = enum
       None
       Text
       Integer
       Float
 
     RowValue* = object
-      case kind: RowValueKind
+      case kind*: RowValueKind
       of Text:
-        value_text: cstring
+        value_text*: cstring
       of Integer:
-        value_int: int
+        value_int*: int
       of Float:
-        value_float: float
+        value_float*: float
       of None:
         discard
     Row* = seq[RowValue]
