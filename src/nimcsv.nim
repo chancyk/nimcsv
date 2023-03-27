@@ -438,28 +438,3 @@ proc createParseContext*(
     num_fields: num_fields
     # py_lib: loadPyLibFromThisProcess()
   )
-
-
-proc main*() =
-  let t0 = getMonoTime()
-  let filepath = r"C:\\Projects\\nimcsv\\sample.csv"
-  var f = open(filepath, fmRead)
-  if f == nil:
-    quit(1)
-
-  var
-    rows = newSeqOfCap[Row](1_000_000)
-    ctx = createParseContext(f, BUFFER_SIZE, num_fields=85)
-
-  # each buffer
-  var row_count = 0
-  for row in ctx.parse_rows(schema=newSeq[ValueType]()):
-    row_count += 1
-    rows.add(row)
-    if row_count mod 100_000 == 0:
-      echo "Row #: ", row_count
-
-  let t2 = getMonoTime()
-  var time_in_seconds = (t2 - t0).inMilliseconds.float64 / 1000.0
-  echo "Elapsed: ", time_in_seconds, "s"
-  echo " # Rows: ", rows.len
